@@ -33,6 +33,15 @@ namespace Microsoft.NET.Build.Tests
         {
         }
 
+        private BuildCommand GetBuildCommand()
+        {
+            var testAsset = _testAssetsManager
+               .CopyTestAsset("HelloWorldWithSubDirs")
+               .WithSource();
+
+            return new BuildCommand(testAsset);
+        }
+
         [Theory]
         //  TargetFramework, RuntimeFrameworkVersion, ExpectedPackageVersion, ExpectedRuntimeFrameworkVersion
         [InlineData("netcoreapp1.0", null, "1.0.5", "1.0.5")]
@@ -84,7 +93,6 @@ namespace Microsoft.NET.Build.Tests
                 Name = "RuntimeFrameworkVersionFloat",
                 TargetFrameworks = "netcoreapp2.0",
                 RuntimeFrameworkVersion = "2.0.*",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -132,7 +140,6 @@ namespace Microsoft.NET.Build.Tests
                 Name = "FrameworkTargetTest",
                 TargetFrameworks = targetFramework,
                 RuntimeFrameworkVersion = runtimeFrameworkVersion,
-                IsSdkProject = true,
                 IsExe = isExe,
                 RuntimeIdentifier = runtimeIdentifier
             };
@@ -193,7 +200,6 @@ namespace Microsoft.NET.Build.Tests
             {
                 Name = "MismatchFrameworkTest",
                 TargetFrameworks = "netcoreapp2.0",
-                IsSdkProject = true,
                 IsExe = true,
             };
 
@@ -209,7 +215,7 @@ namespace Microsoft.NET.Build.Tests
 
             string runtimeIdentifier = EnvironmentInfo.GetCompatibleRid(testProject.TargetFrameworks);
 
-            testProject.AdditionalProperties["RuntimeIdentifiers"] = runtimeIdentifier;            
+            testProject.AdditionalProperties["RuntimeIdentifiers"] = runtimeIdentifier;
 
             var testAsset = _testAssetsManager.CreateTestProject(testProject)
                 .Restore(Log, testProject.Name);
@@ -313,7 +319,6 @@ namespace Microsoft.NET.Build.Tests
             TestProject project = new TestProject()
             {
                 Name = testName,
-                IsSdkProject = true,
                 TargetFrameworks = targetFramework,
                 RuntimeIdentifier = runtimeIdentifier,
                 IsExe = true,
@@ -380,7 +385,6 @@ public static class Program
                 Name = "NetCore2App",
                 TargetFrameworks = targetFramework,
                 IsExe = true,
-                IsSdkProject = true
             };
 
             project.SourceFiles["Program.cs"] = @"
@@ -447,7 +451,6 @@ public static class Program
                 Name = "NetCore2App",
                 TargetFrameworks = targetFramework,
                 IsExe = true,
-                IsSdkProject = true,
                 RuntimeIdentifier = runtimeIdentifier
             };
 
@@ -486,7 +489,6 @@ public static class Program
             {
                 Name = "NetCoreApp1.1_Conflicts",
                 TargetFrameworks = "netcoreapp1.1",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -511,7 +513,6 @@ public static class Program
             {
                 Name = "AppUsingPackageWithSatellites",
                 TargetFrameworks = "netcoreapp2.0",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -534,7 +535,7 @@ public static class Program
                     }
                 });
 
-            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            var publishCommand = new PublishCommand(testAsset);
             publishCommand
                 .Execute("/v:normal", $"/p:TargetFramework={testProject.TargetFrameworks}")
                 .Should()
@@ -555,7 +556,6 @@ public static class Program
             {
                 Name = "OutputPathCasing",
                 TargetFrameworks = "ignored",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -592,7 +592,6 @@ public static class Program
             {
                 Name = "NetCoreAppPackageReference",
                 TargetFrameworks = "netcoreapp3.0",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -600,7 +599,6 @@ public static class Program
             {
                 Name = "NetStandardProject",
                 TargetFrameworks = "netstandard2.0",
-                IsSdkProject = true,
                 IsExe = false
             };
 
@@ -626,7 +624,6 @@ public static class Program
             {
                 Name = "ProjectWithPackageThatNeedsEscapes",
                 TargetFrameworks = "net462",
-                IsSdkProject = true,
                 IsExe = true,
             };
 
@@ -676,7 +673,6 @@ class Program
             {
                 Name = "ReferencesLegacyContracts",
                 TargetFrameworks = "netcoreapp3.0",
-                IsSdkProject = true,
                 IsExe = true,
                 RuntimeIdentifier = EnvironmentInfo.GetCompatibleRid("netcoreapp3.0")
             };
@@ -704,7 +700,6 @@ class Program
             {
                 Name = "NoPackageReferences",
                 TargetFrameworks = "netcoreapp3.0",
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -735,7 +730,6 @@ class Program
             {
                 Name = "Prj_すおヸょー",
                 TargetFrameworks = "netcoreapp3.0",
-                IsSdkProject = true,
                 IsExe = true,
             };
 
@@ -762,7 +756,6 @@ class Program
                 Name = "GenerateFilesTest",
                 TargetFrameworks = TFM,
                 RuntimeIdentifier = runtimeIdentifier,
-                IsSdkProject = true,
                 IsExe = true
             };
 
@@ -793,5 +786,24 @@ class Program
             depsFileLastWriteTime.Should().NotBe(File.GetLastWriteTimeUtc(depsFilePath));
             runtimeConfigLastWriteTime.Should().NotBe(File.GetLastWriteTimeUtc(runtimeConfigPath));
         }
+
+        [Fact]
+        public void It_passes_when_building_single_file_app_without_rid()
+        {
+            GetBuildCommand()
+                .Execute("/p:PublishSingleFile=true")
+                .Should()
+                .Pass();
+        }
+
+        [Fact]
+        public void It_errors_when_publishing_single_file_without_apphost()
+        {
+            GetBuildCommand()
+                .Execute("/p:PublishSingleFile=true", "/p:SelfContained=false", "/p:UseAppHost=false")
+                .Should()
+                .Pass();
+        }
+
     }
 }

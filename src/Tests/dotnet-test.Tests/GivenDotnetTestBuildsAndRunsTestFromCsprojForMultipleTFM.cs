@@ -11,6 +11,7 @@ using Microsoft.NET.TestFramework;
 using Microsoft.NET.TestFramework.Assertions;
 using Microsoft.NET.TestFramework.Commands;
 using Xunit.Abstractions;
+using Microsoft.NET.TestFramework.ProjectConstruction;
 
 namespace Microsoft.DotNet.Cli.Test.Tests
 {
@@ -49,11 +50,11 @@ namespace Microsoft.DotNet.Cli.Test.Tests
                     .Should().Contain("Total tests: 3")
                          .And.Contain("Passed: 2")
                          .And.Contain("Failed: 1")
-                         .And.Contain("\u221a VSTestPassTestDesktop", "because .NET 4.6 tests will pass")
+                         .And.Contain("Passed VSTestPassTestDesktop", "because .NET 4.6 tests will pass")
                          .And.Contain("Total tests: 3")
                          .And.Contain("Passed: 1")
                          .And.Contain("Failed: 2")
-                         .And.Contain("X VSTestFailTestNetCoreApp", "because netcoreapp2.0 tests will fail");
+                         .And.Contain("Failed VSTestFailTestNetCoreApp", "because netcoreapp2.0 tests will fail");
             }
             result.ExitCode.Should().Be(1);
         }
@@ -87,13 +88,13 @@ namespace Microsoft.DotNet.Cli.Test.Tests
                 result.StdOut.Should().Contain("Total tests: 3");
                 result.StdOut.Should().Contain("Passed: 2");
                 result.StdOut.Should().Contain("Failed: 1");
-                result.StdOut.Should().Contain("\u221a TestNamespace.VSTestXunitTests.VSTestXunitPassTestDesktop");
+                result.StdOut.Should().Contain("Passed TestNamespace.VSTestXunitTests.VSTestXunitPassTestDesktop");
 
                 // for target framework netcoreapp1.0
                 result.StdOut.Should().Contain("Total tests: 3");
                 result.StdOut.Should().Contain("Passed: 1");
                 result.StdOut.Should().Contain("Failed: 2");
-                result.StdOut.Should().Contain("X TestNamespace.VSTestXunitTests.VSTestXunitFailTestNetCoreApp");
+                result.StdOut.Should().Contain("Failed TestNamespace.VSTestXunitTests.VSTestXunitFailTestNetCoreApp");
             }
 
             result.ExitCode.Should().Be(1);
@@ -142,6 +143,53 @@ namespace Microsoft.DotNet.Cli.Test.Tests
             new DotnetTestCommand(Log, ConsoleLoggerOutputNormal)
                .WithWorkingDirectory(projectDirectory)
                .Execute("--framework", "netcoreapp3.0")
+               .Should().Pass();
+        }
+
+        [Fact]
+        public void TestSlnWithMultitargetedProject()
+        {
+            var libraryProject = new TestProject()
+            {
+                Name = "LibraryProject",
+                TargetFrameworks = "netcoreapp3.1;net5.0",
+            };
+
+            var testProject = new TestProject()
+            {
+                Name = "TestProject",
+                TargetFrameworks = "net5.0",
+            };
+
+            testProject.PackageReferences.Add(new TestPackageReference("Microsoft.NET.Test.Sdk", "16.7.1"));
+            testProject.PackageReferences.Add(new TestPackageReference("xunit", "2.4.1"));
+            testProject.PackageReferences.Add(new TestPackageReference("xunit.runner.visualstudio", "2.4.3", privateAssets: "all"));
+
+            testProject.ReferencedProjects.Add(libraryProject);
+
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+
+            new DotnetCommand(Log, "new", "sln")
+                .WithWorkingDirectory(testAsset.TestRoot)
+                .Execute()
+                .Should()
+                .Pass();
+
+            new DotnetCommand(Log, "sln", "add", libraryProject.Name)
+                .WithWorkingDirectory(testAsset.TestRoot)
+                .Execute()
+                .Should()
+                .Pass();
+
+            new DotnetCommand(Log, "sln", "add", testProject.Name)
+                .WithWorkingDirectory(testAsset.TestRoot)
+                .Execute()
+                .Should()
+                .Pass();
+
+            new DotnetTestCommand(Log, ConsoleLoggerOutputNormal)
+               .WithWorkingDirectory(testAsset.TestRoot)
+               .Execute()
                .Should().Pass();
         }
     }

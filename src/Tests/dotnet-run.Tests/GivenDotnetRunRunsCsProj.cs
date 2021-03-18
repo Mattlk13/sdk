@@ -3,10 +3,8 @@
 
 using System;
 using System.IO;
-using System.Xml.Linq;
 using FluentAssertions;
 using Microsoft.DotNet.Cli.Utils;
-using Microsoft.DotNet.Tools.Test.Utilities;
 using Microsoft.NET.TestFramework;
 using Microsoft.NET.TestFramework.Assertions;
 using Microsoft.NET.TestFramework.Commands;
@@ -71,7 +69,7 @@ namespace Microsoft.DotNet.Cli.Run.Tests
 
             new DotnetCommand(Log, "run")
                 .WithWorkingDirectory(projectDirectory)
-                .Execute("--framework", "netcoreapp3.0")
+                .Execute("--framework", "netcoreapp3.1")
                 .Should().Pass()
                          .And.HaveStdOutContaining("This string came from the test library!");
         }
@@ -137,7 +135,7 @@ namespace Microsoft.DotNet.Cli.Run.Tests
 
             new DotnetCommand(Log, "run")
                 .WithWorkingDirectory(testProjectDirectory)
-                .Execute("--framework", "netcoreapp3.0")
+                .Execute("--framework", "netcoreapp3.1")
                 .Should().Pass()
                          .And.HaveStdOut("Hello World!");
         }
@@ -529,6 +527,21 @@ namespace Microsoft.DotNet.Cli.Run.Tests
         }
 
         [Fact]
+        public void ItPrintsDuplicateArguments()
+        {
+            var testAppName = "MSBuildTestApp";
+            var testInstance = _testAssetsManager.CopyTestAsset(testAppName)
+                .WithSource();
+
+            var result = new DotnetCommand(Log, "run")
+                .WithWorkingDirectory(testInstance.Path)
+                .Execute("a", "b", "c", "a", "c");
+
+            result.Should().Pass()
+                .And.HaveStdOutContaining("echo args:a;b;c;a;c");
+        }
+
+        [Fact]
         public void ItRunsWithDotnetWithoutApphost()
         {
             var testInstance = _testAssetsManager.CopyTestAsset("AppOutputsExecutablePath").WithSource();
@@ -571,6 +584,57 @@ namespace Microsoft.DotNet.Cli.Run.Tests
                 .Pass()
                 .And
                 .HaveStdOutContaining($"0 = a{Environment.NewLine}1 = {Environment.NewLine}2 = c");
+        }
+
+        [Fact]
+        public void ItDoesNotPrintBuildingMessageByDefault()
+        {
+            var expectedValue = "Building...";
+            var testAppName = "TestAppSimple";
+            var testInstance = _testAssetsManager.CopyTestAsset(testAppName)
+                .WithSource();
+
+            new DotnetCommand(Log, "run")
+               .WithWorkingDirectory(testInstance.Path)
+               .Execute()
+               .Should()
+               .Pass()
+               .And
+               .NotHaveStdOutContaining(expectedValue);
+        }
+
+        [Fact]
+        public void ItPrintsBuildingMessageIfLaunchSettingHasDotnetRunMessagesSet()
+        {
+            var expectedValue = "Building...";
+            var testAppName = "TestAppWithLaunchSettings";
+            var testInstance = _testAssetsManager.CopyTestAsset(testAppName)
+                .WithSource();
+
+            new DotnetCommand(Log, "run")
+               .WithWorkingDirectory(testInstance.Path)
+               .Execute()
+               .Should()
+               .Pass()
+               .And
+               .HaveStdOutContaining(expectedValue);
+        }
+
+        [Fact]
+        public void ItIncludesEnvironmentVariablesSpecifiedInLaunchSettings()
+        {
+            var expectedValue = "MyCoolEnvironmentVariableKey=MyCoolEnvironmentVariableValue";
+            var testAppName = "TestAppWithLaunchSettings";
+            var testInstance = _testAssetsManager.CopyTestAsset(testAppName)
+                .WithSource();
+
+            new DotnetCommand(Log, "run")
+               .WithWorkingDirectory(testInstance.Path)
+               .Execute()
+               .Should()
+               .Pass()
+               .And
+               .HaveStdOutContaining(expectedValue);
         }
     }
 }

@@ -48,8 +48,13 @@ Copyright (c) .NET Foundation. All rights reserved.
       <FrameworkReference Include="@(_FrameworkReferenceToAdd)" />
     </ItemGroup>
 
-    <PropertyGroup Condition="'$(EnableTargetingPackDownload)' == ''">
-      <EnableTargetingPackDownload>true</EnableTargetingPackDownload>
+    <PropertyGroup>
+      <EnableTargetingPackDownload Condition="'$(EnableTargetingPackDownload)' == ''">true</EnableTargetingPackDownload>
+      <EnableRuntimePackDownload Condition="'$(EnableRuntimePackDownload)' == ''">true</EnableRuntimePackDownload>
+    </PropertyGroup>
+
+    <PropertyGroup>
+      <_NuGetRestoreSupported Condition="'$(Language)' == 'C++'">false</_NuGetRestoreSupported>
     </PropertyGroup>
 
     <ItemGroup>
@@ -74,6 +79,7 @@ Copyright (c) .NET Foundation. All rights reserved.
                                 TargetLatestRuntimePatch="$(TargetLatestRuntimePatch)"
                                 TargetLatestRuntimePatchIsDefault="$(_TargetLatestRuntimePatchIsDefault)"
                                 EnableTargetingPackDownload="$(EnableTargetingPackDownload)"
+                                EnableRuntimePackDownload="$(EnableRuntimePackDownload)"
                                 KnownCrossgen2Packs="@(KnownCrossgen2Pack)"
                                 NETCoreSdkRuntimeIdentifier="$(NETCoreSdkRuntimeIdentifier)">
 
@@ -104,7 +110,9 @@ Copyright (c) .NET Foundation. All rights reserved.
                      DotNetComHostLibraryNameWithoutExtension="$(_DotNetComHostLibraryNameWithoutExtension)"
                      DotNetIjwHostLibraryNameWithoutExtension="$(_DotNetIjwHostLibraryNameWithoutExtension)"
                      RuntimeGraphPath="$(BundledRuntimeIdentifierGraphFile)"
-                     KnownAppHostPacks="@(KnownAppHostPack)">
+                     KnownAppHostPacks="@(KnownAppHostPack)"
+                     NuGetRestoreSupported="$(_NuGetRestoreSupported)"
+                     NetCoreTargetingPackRoot="$(NetCoreTargetingPackRoot)">
 
       <Output TaskParameter="PackagesToDownload" ItemName="_PackageToDownload" />
       <Output TaskParameter="AppHost" ItemName="AppHostPack" />
@@ -143,13 +151,15 @@ Copyright (c) .NET Foundation. All rights reserved.
     but were referenced transitively via a project or package reference.  NuGet writes these
     to the assets file, and the ResolvePackageAssets target adds them to the TransitiveFrameworkReference
     item.  Here, we add them to FrameworkReference if they aren't already referenced.
+    We add a transitive attribute to the FrameworkReferences so NuGet can filter them out from CollectFrameworkReferences.
     ============================================================
     -->
   <Target Name="AddTransitiveFrameworkReferences" AfterTargets="ResolvePackageAssets"
           Condition="'@(TransitiveFrameworkReference)' != ''" >
 
     <ItemGroup>
-      <FrameworkReference Include="@(TransitiveFrameworkReference)" Exclude="@(FrameworkReference)"/>
+      <FrameworkReference Include="@(TransitiveFrameworkReference)" Exclude="@(FrameworkReference)"
+                          IsTransitiveFrameworkReference="true" />
     </ItemGroup>
     
   </Target>
@@ -318,7 +328,9 @@ Copyright (c) .NET Foundation. All rights reserved.
     <ResolveTargetingPackAssets FrameworkReferences="@(FrameworkReference)"
                                 ResolvedTargetingPacks="@(ResolvedTargetingPack)"
                                 RuntimeFrameworks="@(RuntimeFramework)"
-                                GenerateErrorForMissingTargetingPacks="$(GenerateErrorForMissingTargetingPacks)">
+                                GenerateErrorForMissingTargetingPacks="$(GenerateErrorForMissingTargetingPacks)"
+                                NuGetRestoreSupported="$(_NuGetRestoreSupported)"
+                                NetCoreTargetingPackRoot="$(NetCoreTargetingPackRoot)">
       <Output TaskParameter="ReferencesToAdd" ItemName="Reference" />
       <Output TaskParameter="PlatformManifests" ItemName="PlatformManifestsFromTargetingPacks" />
       <Output TaskParameter="PackageConflictPreferredPackages" PropertyName="PackageConflictPreferredPackages" />

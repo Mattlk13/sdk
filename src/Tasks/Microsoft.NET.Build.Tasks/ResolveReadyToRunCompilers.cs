@@ -2,16 +2,14 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
+using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
-using System.Reflection.PortableExecutable;
+
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
-using System.Reflection.Metadata;
-using System.Reflection;
+using NuGet.Versioning;
 
 namespace Microsoft.NET.Build.Tasks
 {
@@ -46,6 +44,7 @@ namespace Microsoft.NET.Build.Tasks
         private ITaskItem _runtimePack;
         private ITaskItem _crossgen2Pack;
         private string _targetRuntimeIdentifier;
+        private string _targetPlatform;
         private string _hostRuntimeIdentifier;
 
         private CrossgenToolInfo _crossgenTool;
@@ -111,15 +110,10 @@ namespace Microsoft.NET.Build.Tasks
                 return false;
             }
 
-            if (!ExtractTargetPlatformAndArchitecture(_targetRuntimeIdentifier, out string targetPlatform, out _targetArchitecture) ||
+            if (!ExtractTargetPlatformAndArchitecture(_targetRuntimeIdentifier, out _targetPlatform, out _targetArchitecture) ||
                 !ExtractTargetPlatformAndArchitecture(_hostRuntimeIdentifier, out string hostPlatform, out Architecture hostArchitecture) ||
-                targetPlatform != hostPlatform)
-            {
-                Log.LogError(Strings.ReadyToRunTargetNotSupportedError);
-                return false;
-            }
-
-            if (!GetCrossgenComponentsPaths())
+                _targetPlatform != hostPlatform ||
+                !GetCrossgenComponentsPaths())
             {
                 Log.LogError(Strings.ReadyToRunTargetNotSupportedError);
                 return false;
@@ -127,10 +121,10 @@ namespace Microsoft.NET.Build.Tasks
 
             // Create tool task item
             CrossgenTool = new TaskItem(_crossgenTool.ToolPath);
-            CrossgenTool.SetMetadata("JitPath", _crossgenTool.ClrJitPath);
+            CrossgenTool.SetMetadata(MetadataKeys.JitPath, _crossgenTool.ClrJitPath);
             if (!String.IsNullOrEmpty(_crossgenTool.DiaSymReaderPath))
             {
-                CrossgenTool.SetMetadata("DiaSymReader", _crossgenTool.DiaSymReaderPath);
+                CrossgenTool.SetMetadata(MetadataKeys.DiaSymReader, _crossgenTool.DiaSymReaderPath);
             }
 
             return true;
@@ -139,23 +133,34 @@ namespace Microsoft.NET.Build.Tasks
         private bool ValidateCrossgen2Support()
         {
             _crossgen2Tool.PackagePath = _crossgen2Pack?.GetMetadata(MetadataKeys.PackageDirectory);
-            if (_crossgen2Tool.PackagePath == null)
+            if (_crossgen2Tool.PackagePath == null ||
+                !NuGetVersion.TryParse(_crossgen2Pack.GetMetadata(MetadataKeys.NuGetPackageVersion), out NuGetVersion crossgen2PackVersion))
             {
                 Log.LogError(Strings.ReadyToRunNoValidRuntimePackageError);
                 return false;
             }
 
-            // Crossgen2 only supports the following host->target compilation scenarios in net5.0:
+            bool version5 = crossgen2PackVersion.Major < 6;
+            bool isSupportedTarget = ExtractTargetPlatformAndArchitecture(_targetRuntimeIdentifier, out _targetPlatform, out _targetArchitecture);
+            string targetOS = _targetPlatform switch
+            {
+                "linux" => "linux",
+                "linux-musl" => "linux",
+                "osx" => "osx",
+                "win" => "windows",
+                _ => null
+            };
+
+            // In .NET 5 Crossgen2 supported only the following host->target compilation scenarios:
             //      win-x64 -> win-x64
             //      linux-x64 -> linux-x64
             //      linux-musl-x64 -> linux-musl-x64
-            if (_targetRuntimeIdentifier != _hostRuntimeIdentifier)
-            {
-                Log.LogError(Strings.ReadyToRunTargetNotSupportedError);
-                return false;
-            }
+            isSupportedTarget = isSupportedTarget &&
+                targetOS != null &&
+                (!version5 || _targetRuntimeIdentifier == _hostRuntimeIdentifier) &&
+                GetCrossgen2ComponentsPaths(version5);
 
-            if (!GetCrossgen2ComponentsPaths())
+            if (!isSupportedTarget)
             {
                 Log.LogError(Strings.ReadyToRunTargetNotSupportedError);
                 return false;
@@ -163,10 +168,19 @@ namespace Microsoft.NET.Build.Tasks
 
             // Create tool task item
             Crossgen2Tool = new TaskItem(_crossgen2Tool.ToolPath);
-            Crossgen2Tool.SetMetadata("JitPath", _crossgen2Tool.ClrJitPath);
+            Crossgen2Tool.SetMetadata(MetadataKeys.IsVersion5, version5.ToString());
+            if (version5)
+            {
+                Crossgen2Tool.SetMetadata(MetadataKeys.JitPath, _crossgen2Tool.ClrJitPath);
+            }
+            else
+            {
+                Crossgen2Tool.SetMetadata(MetadataKeys.TargetOS, targetOS);
+                Crossgen2Tool.SetMetadata(MetadataKeys.TargetArch, ArchitectureToString(_targetArchitecture));
+            }
             if (!String.IsNullOrEmpty(_crossgen2Tool.DiaSymReaderPath))
             {
-                Crossgen2Tool.SetMetadata("DiaSymReader", _crossgen2Tool.DiaSymReaderPath);
+                Crossgen2Tool.SetMetadata(MetadataKeys.DiaSymReader, _crossgen2Tool.DiaSymReaderPath);
             }
 
             return true;
@@ -194,13 +208,13 @@ namespace Microsoft.NET.Build.Tasks
             platform = null;
             architecture = default;
 
+            // This will split RID like "linux-musl-arm64" into "linux-musl" and "arm64" components
             int separator = runtimeIdentifier.LastIndexOf('-');
-            if (separator < 0 || separator >= runtimeIdentifier.Length)
+            if (separator < 0)
             {
                 return false;
             }
 
-            platform = runtimeIdentifier.Substring(0, separator).ToLowerInvariant();
             string architectureStr = runtimeIdentifier.Substring(separator + 1).ToLowerInvariant();
 
             switch (architectureStr)
@@ -221,6 +235,7 @@ namespace Microsoft.NET.Build.Tasks
                     return false;
             }
 
+            platform = runtimeIdentifier.Substring(0, separator).ToLowerInvariant();
             return true;
         }
 
@@ -326,20 +341,63 @@ namespace Microsoft.NET.Build.Tasks
             return File.Exists(_crossgenTool.ToolPath) && File.Exists(_crossgenTool.ClrJitPath);
         }
 
-        private bool GetCrossgen2ComponentsPaths()
+        private bool GetCrossgen2ComponentsPaths(bool version5)
         {
+            string toolFileName, v5_clrJitFileNamePattern;
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                _crossgen2Tool.ToolPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", "crossgen2.exe");
-                _crossgen2Tool.ClrJitPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", "clrjitilc.dll");
+                toolFileName = "crossgen2.exe";
+                v5_clrJitFileNamePattern = "clrjit-{0}.dll";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                toolFileName = "crossgen2";
+                v5_clrJitFileNamePattern = "libclrjit-{0}.so";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                toolFileName = "crossgen2";
+                v5_clrJitFileNamePattern = "libclrjit-{0}.dylib";
             }
             else
             {
-                _crossgen2Tool.ToolPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", "crossgen2");
-                _crossgen2Tool.ClrJitPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", "libclrjitilc.so");
+                // Unknown platform
+                return false;
             }
 
-            return File.Exists(_crossgen2Tool.ToolPath) && File.Exists(_crossgen2Tool.ClrJitPath);
+            if (version5)
+            {
+                string clrJitFileName = string.Format(v5_clrJitFileNamePattern, GetTargetSpecForVersion5());
+                _crossgen2Tool.ClrJitPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", clrJitFileName);
+                if (!File.Exists(_crossgen2Tool.ClrJitPath))
+                {
+                    return false;
+                }
+            }
+
+            _crossgen2Tool.ToolPath = Path.Combine(_crossgen2Tool.PackagePath, "tools", toolFileName);
+            return File.Exists(_crossgen2Tool.ToolPath);
+        }
+
+        // Keep in sync with JitConfigProvider.GetTargetSpec in .NET 5
+        private string GetTargetSpecForVersion5()
+        {
+            string targetOSComponent = (_targetPlatform == "win" ? "win" : "unix");
+            string targetArchComponent = ArchitectureToString(_targetArchitecture);
+            return targetOSComponent + '-' + targetArchComponent;
+        }
+
+        private static string ArchitectureToString(Architecture architecture)
+        {
+            return architecture switch
+            {
+                Architecture.X86 => "x86",
+                Architecture.X64 => "x64",
+                Architecture.Arm => "arm",
+                Architecture.Arm64 => "arm64",
+                _ => null
+            };
         }
     }
 }

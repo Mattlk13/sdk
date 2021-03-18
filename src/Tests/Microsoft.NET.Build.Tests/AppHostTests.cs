@@ -177,7 +177,6 @@ namespace Microsoft.NET.Build.Tests
                 Name = "ResourceTest",
                 TargetFrameworks = targetFramework,
                 RuntimeIdentifier = runtimeIdentifier,
-                IsSdkProject = true,
                 IsExe = true,
             };
             testProject.AdditionalProperties.Add("AssemblyVersion", version);
@@ -239,7 +238,6 @@ namespace Microsoft.NET.Build.Tests
                 TargetFrameworks = "netcoreapp3.0",
                 //  Use "any" as RID so that it will fail to find AppHost
                 RuntimeIdentifier = "any",
-                IsSdkProject = true,
                 IsExe = true,
             };
             testProject.AdditionalProperties["SelfContained"] = "false";
@@ -255,16 +253,15 @@ namespace Microsoft.NET.Build.Tests
 
         }
 
-        [WindowsOnlyFact] // Windows-only due to https://github.com/dotnet/corefx/issues/42455
+        [WindowsOnlyFact] // https://github.com/dotnet/sdk/issues/16252
         public void It_retries_on_failure_to_create_apphost()
         {
-            const string TFM = "netcoreapp3.0";
+            const string TFM = "net5.0";
 
             var testProject = new TestProject()
             {
                 Name = "RetryAppHost",
                 TargetFrameworks = TFM,
-                IsSdkProject = true,
                 IsExe = true,
             };
             
@@ -287,7 +284,7 @@ namespace Microsoft.NET.Build.Tests
                     testProject.Name + ".dll"),
                 DateTime.UtcNow.AddSeconds(5));
 
-            var intermediateAppHost = Path.Combine(intermediateDirectory, testProject.Name + Constants.ExeSuffix);
+            var intermediateAppHost = Path.Combine(intermediateDirectory, "apphost" + Constants.ExeSuffix);
 
             using (var stream = new FileStream(intermediateAppHost, FileMode.Open, FileAccess.Read, FileShare.None))
             {

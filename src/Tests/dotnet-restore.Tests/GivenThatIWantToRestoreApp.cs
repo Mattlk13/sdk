@@ -53,20 +53,21 @@ namespace Microsoft.DotNet.Restore.Test
         }
 
         [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void ItRestoresLibToSpecificDirectory(bool useStaticGraphEvaluation)
+        [InlineData(true, ".csproj")]
+        [InlineData(false, ".csproj")]
+        [InlineData(true, ".fsproj")]
+        [InlineData(false, ".fsproj")]
+        public void ItRestoresLibToSpecificDirectory(bool useStaticGraphEvaluation, string extension)
         {
             var testProject = new TestProject()
             {
                 Name = "RestoreToDir",
                 TargetFrameworks = "net5.0",
-                IsSdkProject = true,
             };
 
             testProject.PackageReferences.Add(new TestPackageReference("Newtonsoft.Json", "12.0.3"));
 
-            var testAsset = _testAssetsManager.CreateTestProject(testProject, identifier: useStaticGraphEvaluation.ToString());
+            var testAsset = _testAssetsManager.CreateTestProject(testProject, identifier: useStaticGraphEvaluation.ToString(), targetExtension: extension);
 
             var rootPath = Path.Combine(testAsset.TestRoot, testProject.Name);
 
@@ -151,6 +152,26 @@ namespace Microsoft.DotNet.Restore.Test
                  .Pass()
                  .And.NotHaveStdErr()
                  .And.NotHaveStdOut();
+        }
+
+        [Fact]
+        public void ItAcceptsArgumentsAfterProperties()
+        {
+            var rootPath = _testAssetsManager.CreateTestDirectory().Path;
+
+            string[] newArgs = new[] { "console", "-o", rootPath, "--no-restore" };
+            new DotnetCommand(Log, "new")
+                .WithWorkingDirectory(rootPath)
+                .Execute(newArgs)
+                .Should()
+                .Pass();
+
+            string[] args = new[] { "/p:prop1=true", "/m:1" };
+            new DotnetRestoreCommand(Log)
+                 .WithWorkingDirectory(rootPath)
+                 .Execute(args)
+                 .Should()
+                 .Pass();
         }
 
         private static string[] HandleStaticGraphEvaluation(bool useStaticGraphEvaluation, string[] args) =>

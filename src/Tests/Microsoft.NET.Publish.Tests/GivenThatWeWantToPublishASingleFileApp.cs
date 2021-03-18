@@ -11,7 +11,6 @@ using Microsoft.NET.TestFramework.ProjectConstruction;
 using Xunit;
 using Xunit.Abstractions;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -32,13 +31,13 @@ namespace Microsoft.NET.Publish.Tests
         private const string UseAppHost = "/p:UseAppHost=true";
         private const string IncludeDefault = "/p:IncludeSymbolsInSingleFile=false";
         private const string IncludePdb = "/p:IncludeSymbolsInSingleFile=true";
-        private const string IncludeNative = "/p:IncludeNativeLibrariesInSingleFile=true";
-        private const string IncludeAllContent = "/p:IncludeAllContentInSingleFile=true";
+        private const string IncludeNative = "/p:IncludeNativeLibrariesForSelfExtract=true";
+        private const string DontIncludeNative = "/p:IncludeNativeLibrariesForSelfExtract=false";
+        private const string IncludeAllContent = "/p:IncludeAllContentForSelfExtract=true";
 
         private readonly string RuntimeIdentifier = $"/p:RuntimeIdentifier={RuntimeInformation.RuntimeIdentifier}";
         private readonly string SingleFile = $"{TestProjectName}{Constants.ExeSuffix}";
         private readonly string PdbFile = $"{TestProjectName}.pdb";
-        private readonly string NiPdbFile = $"{TestProjectName}.ni.pdb";
         private const string NewestContent = "Signature.Newest.Stamp";
         private const string AlwaysContent = "Signature.Always.Stamp";
 
@@ -61,7 +60,7 @@ namespace Microsoft.NET.Publish.Tests
             //  <TestRoot>/SmallNameDir/This is a directory with a really long name for one that only contains a small file/.word
             //
             // This content is not checked in to the test assets, but generated during test execution
-            // in order to circumvent certain issues like: 
+            // in order to circumvent certain issues like:
             // Git Clone: Cannot clone files with long names on Windows if long file name support is not enabled
             // Nuget Pack: By default ignores files starting with "."
             string longDirPath = Path.Combine(testAsset.TestRoot, SmallNameDir, LargeNameDir);
@@ -71,7 +70,7 @@ namespace Microsoft.NET.Publish.Tests
                 writer.Write("World!");
             }
 
-            return new PublishCommand(Log, testAsset.TestRoot);
+            return new PublishCommand(testAsset);
         }
 
         private string GetNativeDll(string baseName)
@@ -84,6 +83,39 @@ namespace Microsoft.NET.Publish.Tests
         {
             return publishCommand.GetOutputDirectory(targetFramework: targetFramework,
                                                      runtimeIdentifier: RuntimeInformation.RuntimeIdentifier);
+        }
+
+        [Fact]
+        public void Incremental_add_single_file()
+        {
+            var testProject = new TestProject()
+            {
+                Name = "SingleFileTest",
+                TargetFrameworks = "net5.0",
+                IsExe = true,
+            };
+            testProject.AdditionalProperties.Add("SelfContained", $"{true}");
+
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+            var cmd = new PublishCommand(testAsset);
+
+            var singleFilePath = Path.Combine(GetPublishDirectory(cmd).FullName, $"SingleFileTest{Constants.ExeSuffix}");
+            cmd.Execute(RuntimeIdentifier).Should().Pass();
+            var time1 = File.GetLastWriteTimeUtc(singleFilePath);
+
+            WaitForUtcNowToAdvance();
+
+            cmd.Execute(PublishSingleFile, RuntimeIdentifier).Should().Pass();
+            var time2 = File.GetLastWriteTimeUtc(singleFilePath);
+
+            time2.Should().BeAfter(time1);
+
+            var exeCommand = new RunExeCommand(Log, singleFilePath);
+            exeCommand.Execute()
+                .Should()
+                .Pass()
+                .And
+                .HaveStdOutContaining("Hello World");
         }
 
         [Fact]
@@ -115,13 +147,12 @@ namespace Microsoft.NET.Publish.Tests
             {
                 Name = "ClassLib",
                 TargetFrameworks = "netstandard2.0",
-                IsSdkProject = true,
                 IsExe = false,
             };
 
             var testAsset = _testAssetsManager.CreateTestProject(testProject);
 
-            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            var publishCommand = new PublishCommand(testAsset);
 
             publishCommand.Execute(PublishSingleFile, RuntimeIdentifier)
                 .Should()
@@ -139,13 +170,12 @@ namespace Microsoft.NET.Publish.Tests
             {
                 Name = "NetStandardExe",
                 TargetFrameworks = "netstandard2.0",
-                IsSdkProject = true,
                 IsExe = true,
             };
 
             var testAsset = _testAssetsManager.CreateTestProject(testProject);
 
-            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            var publishCommand = new PublishCommand(testAsset);
 
             publishCommand.Execute(PublishSingleFile, RuntimeIdentifier, UseAppHost)
                 .Should()
@@ -163,13 +193,12 @@ namespace Microsoft.NET.Publish.Tests
             {
                 Name = "ConsoleApp",
                 TargetFrameworks = "netcoreapp2.2",
-                IsSdkProject = true,
                 IsExe = true,
             };
 
             var testAsset = _testAssetsManager.CreateTestProject(testProject);
 
-            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            var publishCommand = new PublishCommand(testAsset);
 
             publishCommand.Execute(PublishSingleFile, RuntimeIdentifier)
                 .Should()
@@ -178,7 +207,19 @@ namespace Microsoft.NET.Publish.Tests
                 .HaveStdOutContaining(Strings.PublishSingleFileRequiresVersion30);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
+        public void It_errors_when_including_all_content_but_not_native_libraries()
+        {
+            var publishCommand = GetPublishCommand();
+            publishCommand
+                .Execute(PublishSingleFile, RuntimeIdentifier, IncludeAllContent, DontIncludeNative)
+                .Should()
+                .Fail()
+                .And
+                .HaveStdOutContaining(Strings.CannotIncludeAllContentButNotNativeLibrariesInSingleFile);
+        }
+
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_for_framework_dependent_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -193,7 +234,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_for_self_contained_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -202,7 +243,7 @@ namespace Microsoft.NET.Publish.Tests
                 .Should()
                 .Pass();
 
-            string[] expectedFiles = { SingleFile, PdbFile, SmallNameDirWord, LargeNameDirWord, GetNativeDll("coreclr"), GetNativeDll("clrjit") };
+            string[] expectedFiles = { SingleFile, PdbFile, SmallNameDirWord, LargeNameDirWord };
             string[] unexpectedFiles = { GetNativeDll("hostfxr"), GetNativeDll("hostpolicy") };
 
             GetPublishDirectory(publishCommand)
@@ -212,7 +253,7 @@ namespace Microsoft.NET.Publish.Tests
                 .NotHaveFiles(unexpectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_with_native_binaries_for_framework_dependent_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -227,7 +268,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_with_native_binaries_for_self_contained_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -242,7 +283,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_with_all_content_for_framework_dependent_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -257,7 +298,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_with_all_content_for_self_contained_apps()
         {
             var publishCommand = GetPublishCommand();
@@ -272,52 +313,90 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
-        public void It_generates_a_single_file_including_pdbs()
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData("netcoreapp3.0")]
+        [InlineData("netcoreapp3.1")]
+        public void It_generates_a_single_file_including_pdbs(string targetFramework)
         {
-            var publishCommand = GetPublishCommand();
+            var testProject = new TestProject()
+            {
+                Name = "SingleFileTest",
+                TargetFrameworks = targetFramework,
+                IsExe = true,
+            };
+
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+            var publishCommand = new PublishCommand(testAsset);
+
             publishCommand
                 .Execute(PublishSingleFile, RuntimeIdentifier, IncludeAllContent, IncludePdb)
                 .Should()
                 .Pass();
 
-            string[] expectedFiles = { SingleFile };
-            GetPublishDirectory(publishCommand)
+            string[] expectedFiles = { $"{testProject.Name}{Constants.ExeSuffix}" };
+            GetPublishDirectory(publishCommand, targetFramework)
                 .Should()
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [WindowsOnlyFact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_excludes_ni_pdbs_from_single_file()
         {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                // R2R doesn't produce ni pdbs on OSX.
+                return;
+            }
+
             var publishCommand = GetPublishCommand();
             publishCommand
                 .Execute(PublishSingleFile, RuntimeIdentifier, IncludeAllContent, ReadyToRun, ReadyToRunWithSymbols)
                 .Should()
                 .Pass();
 
-            string[] expectedFiles = { SingleFile, PdbFile, NiPdbFile };
+            var intermediateDirectory = publishCommand.GetIntermediateDirectory(targetFramework: "net5.0", runtimeIdentifier: RuntimeInformation.RuntimeIdentifier);
+            var mainProjectDll = Path.Combine(intermediateDirectory.FullName, $"{TestProjectName}.dll");
+            var niPdbFile = GivenThatWeWantToPublishReadyToRun.GetPDBFileName(mainProjectDll);
+
+            string[] expectedFiles = { SingleFile, PdbFile, niPdbFile };
             GetPublishDirectory(publishCommand)
                 .Should()
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [WindowsOnlyFact]
-        public void It_can_include_ni_pdbs_in_single_file()
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData("netcoreapp3.0")]
+        [InlineData("netcoreapp3.1")]
+        public void It_can_include_ni_pdbs_in_single_file(string targetFramework)
         {
-            var publishCommand = GetPublishCommand();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                // R2R doesn't produce ni pdbs on OSX.
+                return;
+            }
+
+            var testProject = new TestProject()
+            {
+                Name = "SingleFileTest",
+                TargetFrameworks = targetFramework,
+                IsExe = true,
+            };
+
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+            var publishCommand = new PublishCommand(testAsset);
+
             publishCommand
                 .Execute(PublishSingleFile, RuntimeIdentifier, ReadyToRun, ReadyToRunWithSymbols, IncludeAllContent, IncludePdb)
                 .Should()
                 .Pass();
 
-            string[] expectedFiles = { SingleFile };
-            GetPublishDirectory(publishCommand)
+            string[] expectedFiles = { $"{testProject.Name}{Constants.ExeSuffix}" };
+            GetPublishDirectory(publishCommand, targetFramework)
                 .Should()
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Theory]
+        [RequiresMSBuildVersionTheory("16.8.0")]
         [InlineData(ExcludeNewest, NewestContent)]
         [InlineData(ExcludeAlways, AlwaysContent)]
         public void It_generates_a_single_file_excluding_content(string exclusion, string content)
@@ -334,7 +413,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_generates_a_single_file_for_R2R_compiled_Apps()
         {
             var publishCommand = GetPublishCommand();
@@ -349,7 +428,7 @@ namespace Microsoft.NET.Publish.Tests
                 .OnlyHaveFiles(expectedFiles);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_does_not_rewrite_the_single_file_unnecessarily()
         {
             var publishCommand = GetPublishCommand();
@@ -372,7 +451,7 @@ namespace Microsoft.NET.Publish.Tests
             fileWriteTimeAfterSecondRun.Should().Be(fileWriteTimeAfterFirstRun);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_rewrites_the_apphost_for_single_file_publish()
         {
             var publishCommand = GetPublishCommand();
@@ -396,7 +475,7 @@ namespace Microsoft.NET.Publish.Tests
             singleFileSize.Should().BeGreaterThan(appHostSize);
         }
 
-        [Fact]
+        [RequiresMSBuildVersionFact("16.8.0")]
         public void It_rewrites_the_apphost_for_non_single_file_publish()
         {
             var publishCommand = GetPublishCommand();
@@ -420,32 +499,119 @@ namespace Microsoft.NET.Publish.Tests
             appHostSize.Should().BeLessThan(singleFileSize);
         }
 
-        [Theory]
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData("net6.0")]
+        public void ILLink_analyzer_warnings_are_produced(string targetFramework)
+        {
+            var projectName = "ILLinkAnalyzerWarningsApp";
+            var testProject = CreateTestProjectWithAnalyzerWarnings(targetFramework, projectName, true);
+            testProject.AdditionalProperties["PublishSingleFile"] = "true";
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+
+            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            publishCommand
+                .Execute(RuntimeIdentifier)
+                .Should().Pass()
+                .And.HaveStdOutContaining("(9,13): warning IL3000")
+                .And.HaveStdOutContaining("(10,13): warning IL3001");
+        }
+
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData("net6.0")]
+        public void ILLink_linker_analyzer_warnings_are_not_produced(string targetFramework)
+        {
+            var projectName = "ILLinkAnalyzerWarningsApp";
+            var testProject = CreateTestProjectWithAnalyzerWarnings(targetFramework, projectName, true);
+            // Inactive linker settings should have no effect on the linker analyzer,
+            // unless PublishTrimmed is also set.
+            testProject.AdditionalProperties["PublishSingleFile"] = "true";
+            testProject.AdditionalProperties["SuppressTrimAnalysisWarnings"] = "false";
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+
+            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            publishCommand
+                .Execute(RuntimeIdentifier)
+                .Should().Pass()
+                .And.NotHaveStdOutContaining("IL2026");
+        }
+
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData("net6.0")]
+        public void ILLink_analyzer_warnings_are_produced_using_EnableSingleFileAnalyzer(string targetFramework)
+        {
+            var projectName = "ILLinkAnalyzerWarningsApp";
+            var testProject = CreateTestProjectWithAnalyzerWarnings(targetFramework, projectName, true);
+            testProject.AdditionalProperties["EnableSingleFileAnalyzer"] = "true";
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+
+            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            publishCommand
+                .Execute(RuntimeIdentifier)
+                .Should().Pass()
+                .And.HaveStdOutContaining("(9,13): warning IL3000")
+                .And.HaveStdOutContaining("(10,13): warning IL3001");
+        }
+
+        private TestProject CreateTestProjectWithAnalyzerWarnings(string targetFramework, string projectName, bool isExecutable)
+        {
+            var testProject = new TestProject()
+            {
+                Name = projectName,
+                TargetFrameworks = targetFramework,
+                IsExe = isExecutable
+            };
+
+            testProject.SourceFiles[$"{projectName}.cs"] = @"
+using System.Reflection;
+using System.Diagnostics.CodeAnalysis;
+class C
+{
+    static void Main()
+    {
+        var a = Assembly.LoadFrom(""/some/path/not/in/bundle"");
+        _ = a.Location;
+        _ = a.GetFiles();
+        ProduceLinkerAnalysisWarning();
+    }
+
+    [RequiresUnreferencedCode(""Linker analysis warning"")]
+    static void ProduceLinkerAnalysisWarning()
+    {
+    }
+}";
+
+            return testProject;
+        }
+
+        [RequiresMSBuildVersionTheory("16.8.0")]
         [InlineData("netcoreapp3.0", false, IncludeDefault)]
         [InlineData("netcoreapp3.0", true, IncludeDefault)]
+        [InlineData("netcoreapp3.0", false, IncludePdb)]
+        [InlineData("netcoreapp3.0", true, IncludePdb)]
         [InlineData("netcoreapp3.1", false, IncludeDefault)]
         [InlineData("netcoreapp3.1", true, IncludeDefault)]
+        [InlineData("netcoreapp3.1", false, IncludePdb)]
+        [InlineData("netcoreapp3.1", true, IncludePdb)]
         [InlineData("net5.0", false, IncludeDefault)]
         [InlineData("net5.0", false, IncludeNative)]
         [InlineData("net5.0", false, IncludeAllContent)]
-        [InlineData("net5.0", false, IncludePdb)]
         [InlineData("net5.0", true, IncludeDefault)]
         [InlineData("net5.0", true, IncludeNative)]
         [InlineData("net5.0", true, IncludeAllContent)]
-        [InlineData("net5.0", true, IncludePdb)]
         public void It_runs_single_file_apps(string targetFramework, bool selfContained, string bundleOption)
         {
             var testProject = new TestProject()
             {
                 Name = "SingleFileTest",
                 TargetFrameworks = targetFramework,
-                IsSdkProject = true,
                 IsExe = true,
             };
             testProject.AdditionalProperties.Add("SelfContained", $"{selfContained}");
 
-            var testAsset = _testAssetsManager.CreateTestProject(testProject);
-            var publishCommand = new PublishCommand(Log, Path.Combine(testAsset.TestRoot, testProject.Name));
+            var testAsset = _testAssetsManager.CreateTestProject(
+                testProject,
+                identifier: targetFramework + "_" + selfContained + "_" + bundleOption);
+            var publishCommand = new PublishCommand(testAsset);
 
             publishCommand.Execute(PublishSingleFile, RuntimeIdentifier, bundleOption)
                 .Should()
@@ -460,6 +626,29 @@ namespace Microsoft.NET.Publish.Tests
                 .Pass()
                 .And
                 .HaveStdOutContaining("Hello World");
+        }
+
+        [RequiresMSBuildVersionTheory("16.8.0")]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void It_errors_when_including_symbols_targeting_net5(bool selfContained)
+        {
+            var testProject = new TestProject()
+            {
+                Name = "SingleFileTest",
+                TargetFrameworks = "net5.0",
+                IsExe = true,
+            };
+            testProject.AdditionalProperties.Add("SelfContained", $"{selfContained}");
+
+            var testAsset = _testAssetsManager.CreateTestProject(testProject);
+            var publishCommand = new PublishCommand(testAsset);
+
+            publishCommand.Execute(PublishSingleFile, RuntimeIdentifier, IncludePdb)
+                .Should()
+                .Fail()
+                .And
+                .HaveStdOutContaining(Strings.CannotIncludeSymbolsInSingleFile);
         }
     }
 }

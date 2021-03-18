@@ -32,6 +32,11 @@
         <target state="translated">Hodnotu vlastnosti {0} nejde převést na řetězec.</target>
         <note />
       </trans-unit>
+      <trans-unit id="RunCommandBuilding">
+        <source>Building...</source>
+        <target state="translated">Sestavování...</target>
+        <note />
+      </trans-unit>
       <trans-unit id="RunCommandException">
         <source>The build failed. Fix the build errors and run again.</source>
         <target state="translated">Sestavení se nepovedlo. Opravte v sestavení chyby a spusťte ho znovu.</target>
@@ -59,9 +64,9 @@ Cílem projektu je více architektur. Pomocí parametru {0} určete, která arch
 Ensure you have a runnable project type and ensure '{0}' supports this project.
 A runnable project should target a runnable TFM (for instance, net5.0) and have OutputType 'Exe'.
 The current {1} is '{2}'.</source>
-        <target state="needs-review-translation">Projekt nelze spustit.
+        <target state="translated">Projekt se nedá spustit.
 Ověřte prosím, že máte spustitelný typ projektu, a zajistěte, aby tento projekt podporoval {0}.
-Cílem spustitelného projektu by mělo být TFM (například netcoreapp2.0) a jeho OutputType by měl být Exe.
+Cílem spustitelného projektu by mělo být TFM (například net5.0) a jeho OutputType by měl být Exe.
 Aktuální {1} je {2}.</target>
         <note />
       </trans-unit>
